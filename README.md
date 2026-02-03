@@ -1,2 +1,2 @@
 # scriptsutils
-Scripts que uso para hacer cosas
+Por fin me cansé de hacer scripts cada vez que necesito algo, mejor reutilizar.
