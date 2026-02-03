@@ -1,0 +1,44 @@
+#!/bin/bash
+# Compara en un archivo grande , si el archivo pequeño está contenida alguna linea dentro de él.
+
+if [ $# -ne 2 ]; then
+    echo "Uso: $0 <archivo_grande> <archivo_a_cotejar>"
+    exit 1
+fi
+
+ARCHIVO_GRANDE="$1"
+ARCHIVO_COTEJAR="$2"
+
+# Verificar archivos
+[ ! -f "$ARCHIVO_GRANDE" ] && echo "Error: '$ARCHIVO_GRANDE' no existe." && exit 1
+[ ! -f "$ARCHIVO_COTEJAR" ] && echo "Error: '$ARCHIVO_COTEJAR' no existe." && exit 1
+
+contador_si=0
+contador_no=0
+linea_num=0
+
+echo "Comparando '$ARCHIVO_COTEJAR' contra '$ARCHIVO_GRANDE'..."
+echo "=============================================================="
+
+# Procesar archivo a cotejar
+while IFS= read -r linea || [ -n "$linea" ]; do
+    ((linea_num++))
+    
+    # Saltar líneas vacías
+    [ -z "$linea" ] && echo "Línea $linea_num: (vacía) - IGNORADA" && continue
+    
+    # Usar grep para buscar de forma más eficiente
+    if grep -q "$linea" "$ARCHIVO_GRANDE" 2>/dev/null; then
+        echo "Línea $linea_num: '$linea' - SÍ"
+        ((contador_si++))
+    else
+        echo "Línea $linea_num: '$linea' - NO"
+        ((contador_no++))
+    fi
+    
+done < "$ARCHIVO_COTEJAR"
+
+echo "=============================================================="
+echo "RESUMEN:"
+echo "Líneas encontradas (SÍ): $contador_si"
+echo "Líneas no encontradas (NO): $contador_no"
