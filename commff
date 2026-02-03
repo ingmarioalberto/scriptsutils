@@ -28,7 +28,7 @@ while IFS= read -r linea || [ -n "$linea" ]; do
     [ -z "$linea" ] && echo "Línea $linea_num: (vacía) - IGNORADA" && continue
     
     # Usar grep para buscar de forma más eficiente
-    if grep -q "$linea" "$ARCHIVO_GRANDE" 2>/dev/null; then
+    if grep -iq "$linea" "$ARCHIVO_GRANDE" 2>/dev/null; then
         echo "Línea $linea_num: '$linea' - SÍ"
         ((contador_si++))
     else
