@@ -1,0 +1,291 @@
+#!/bin/bash
+
+MYSELF=$(basename "$0")
+QUIET=0
+PID_VALUE=""
+PROC_NAME=""
+
+# Función de ayuda
+SHOW_HELP() {
+    echo "Uso: $MYSELF [OPCIONES]"
+    echo ""
+    echo "Opciones:"
+    echo "  -q              Modo silencioso (sin output)"
+    echo "  -p <pid>        Esperar por PID específico"
+    echo "  -n <nombre>     Esperar por nombre de proceso (solo nombre, sin ruta)"
+    echo "  -h, --help      Mostrar esta ayuda"
+    echo ""
+    echo "Ejemplos:"
+    echo "  $MYSELF -n firefox        # Espera por proceso 'firefox'"
+    echo "  $MYSELF -p 12345          # Espera por PID 12345"
+    echo "  $MYSELF -q -n firefox     # Modo silencioso"
+    echo "  $MYSELF -q -p 12345       # Modo silencioso"
+    echo ""
+    echo "Nota:  -p / -n, son mutuamente excluyentes"
+    echo ""
+    echo "Waits for a process by pid or by name to finish and then exits"
+    echo "useful when using command chaining"
+    echo "  $MYSELF -n wget && mv *.html /tmp/"
+    echo "  Waits until some wget is finished and then continues to mv command"
+    exit ${1:-1}
+}
+
+check_comm() {
+    local proc_name="$1"
+    local get_list="$2"
+    
+    # Buscar procesos por nombre base (último componente después de /)
+    # pgrep busca en el nombre del comando sin argumentos
+    local pids
+    pids=$(pgrep -x "$proc_name" 2>/dev/null | grep -v "^$$\$")
+    
+    # Si no encuentra con -x, intentar buscar procesos cuyo comm comience con el nombre
+    if [[ -z "$pids" ]]; then
+        # Buscar en la columna 'comm' (nombre base sin argumentos)
+        pids=$(ps -eo pid=,comm= | awk -v proc="$proc_name" '$2 == proc {print $1}' | grep -v "^$$\$")
+    fi
+    
+    if [[ -z "$pids" ]]; then
+        return 1  # No hay procesos
+    fi
+    
+    # Contar cuántos procesos hay
+    local count
+    count=$(echo "$pids" | wc -w)
+    
+    if [[ "$get_list" == "1" ]]; then
+        # Retornar la lista de PIDs
+        echo "$pids"
+        return 0
+    fi
+    
+    # Para el check normal, retornar éxito si hay al menos un proceso
+    [[ $count -gt 0 ]] && return 0 || return 1
+}
+
+# Función para obtener detalles de los procesos
+list_processes() {
+    local proc_name="$1"
+    local pids="$2"
+    
+    echo ""
+    echo "Error: Se encontraron múltiples procesos con el nombre '$proc_name'"
+    echo ""
+    echo "Procesos encontrados (PID - COMANDO):"
+    echo "------------------------------------"
+    
+    # Mostrar información de cada PID
+    for pid in $pids; do
+        # Obtener información del proceso
+        if ps -p "$pid" >/dev/null 2>&1; then
+            # Mostrar PID y línea de comando completa
+            cmd=$(ps -p "$pid" -o cmd= --no-headers 2>/dev/null)
+            # Mostrar solo los primeros 80 caracteres para mejor formato
+            short_cmd="${cmd:0:80}"
+            if [[ ${#cmd} -gt 80 ]]; then
+                short_cmd="${short_cmd}..."
+            fi
+            printf "  %-8s %s\n" "$pid" "$short_cmd"
+        fi
+    done
+    
+    echo ""
+    echo "Para más detalles ejecute: ps aux | grep -E '^[^ ]+ +[0-9]+.*$proc_name' | grep -v grep"
+    echo ""
+}
+
+# Función para verificar proceso por PID
+check_pid() {
+    local pid="$1"
+    # Verificar si el PID existe y es un proceso
+    kill -0 "$pid" 2>/dev/null && return 0 || return 1
+}
+
+# Función para salir
+do_exit() {
+    case "$1" in
+        0)
+            if [[ "$QUIET" == "0" ]]; then
+                echo ""
+                echo "done"
+            fi
+            exit 0
+            ;;
+        1)
+            # Ya se mostró el mensaje de error en list_processes
+            exit 1
+            ;;
+        *)
+            if [[ "$QUIET" == "0" ]]; then
+                echo ""
+                echo "error:$2" >&2
+            fi
+            exit ${1:-1}
+            ;;
+    esac
+}
+
+# Función para mostrar progreso
+process_exists_then_wait() {
+    if [[ "$QUIET" == "0" ]]; then
+        echo -n "."
+    fi
+    sleep 1
+}
+
+# Función para verificar si hay múltiples procesos al inicio
+check_multiple_processes() {
+    local proc_name="$1"
+    
+    # Obtener lista de PIDs
+    local pids
+    pids=$(check_comm "$proc_name" "1")
+    
+    if [[ -z "$pids" ]]; then
+        return 1  # No hay procesos
+    fi
+    
+    # Contar procesos
+    local count
+    count=$(echo "$pids" | wc -w)
+    
+    if [[ $count -gt 1 ]]; then
+        # Mostrar lista de procesos
+        list_processes "$proc_name" "$pids"
+        return 0  # Hay múltiples procesos
+    fi
+    
+    return 2  # Solo hay un proceso
+}
+
+# Función principal del bucle
+do_loop() {
+    local counter=0
+    
+    if [[ "$QUIET" == "0" ]]; then
+        if [[ -n "$PID_VALUE" ]]; then
+            echo "waiting for PID $PID_VALUE..."
+        elif [[ -n "$PROC_NAME" ]]; then
+            echo "waiting for process name: '$PROC_NAME'..."
+        fi
+    fi
+    
+    while true; do
+        counter=$((counter + 1))
+        
+        if [[ -n "$PID_VALUE" ]]; then
+            if check_pid "$PID_VALUE"; then
+                process_exists_then_wait
+            else
+                do_exit 0
+            fi
+        elif [[ -n "$PROC_NAME" ]]; then
+            # Verificar proceso por nombre
+            if check_comm "$PROC_NAME"; then
+                process_exists_then_wait
+            else
+                do_exit 0
+            fi
+        fi
+        
+        # Límite opcional de tiempo
+        # if [[ $counter -gt 3600 ]]; then  # 1 hora máximo
+        #     do_exit 2 "Tiempo de espera excedido"
+        # fi
+    done
+}
+
+# Procesar opciones con getopt
+OPTS=$(getopt -o qhp:n: -l help -n "$MYSELF" -- "$@")
+
+if [ $? != 0 ]; then
+    SHOW_HELP
+fi
+
+eval set -- "$OPTS"
+
+# Parsear opciones
+while true; do
+    case "$1" in
+        -h|--help)
+            SHOW_HELP 0
+            ;;
+        -q)
+            QUIET=1
+            shift
+            ;;
+        -p)
+            # Validar que el PID sea numérico
+            if [[ ! "$2" =~ ^[0-9]+$ ]]; then
+                echo "Error: PID must be a number" >&2
+                exit 1
+            fi
+            PID_VALUE="$2"
+            shift 2
+            ;;
+        -n)
+            PROC_NAME="$2"
+            shift 2
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            echo "Internal Error" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Validaciones después de parsear todas las opciones
+
+# Verificar que se haya proporcionado -p O -n (no ambos)
+if [[ -n "$PID_VALUE" && -n "$PROC_NAME" ]]; then
+    echo "Error:  -p y -n are mutually exclusive" >&2
+    echo "Use -p <pid>" >&2
+    echo "or" >&2
+    echo "-n <process_name>" >&2
+    exit 1
+fi
+
+# Verificar que se haya proporcionado al menos -p o -n
+if [[ -z "$PID_VALUE" && -z "$PROC_NAME" ]]; then
+    echo "Error: Se requiere -p <pid> O -n <nombre>" >&2
+    SHOW_HELP
+fi
+
+# Verificar que no haya argumentos extra después de las opciones
+if [[ $# -gt 0 ]]; then
+    echo "Warning: extra arguments being ignored: $@" >&2
+fi
+
+# Si se usa -n, verificar si hay múltiples procesos
+if [[ -n "$PROC_NAME" ]]; then
+    # Obtener lista de PIDs primero
+    pids=$(check_comm "$PROC_NAME" "1")
+    
+    if [[ -n "$pids" ]]; then
+        # Contar procesos
+        count=$(echo "$pids" | wc -w)
+        
+        if [[ $count -gt 1 ]]; then
+            # Mostrar lista de procesos
+            list_processes "$PROC_NAME" "$pids"
+            exit 1
+        elif [[ $count -eq 1 ]]; then
+            # Solo hay un proceso, continuar
+            if [[ "$QUIET" == "0" ]]; then
+                echo "Proceso '$PROC_NAME' encontrado (PID: $pids). Esperando..."
+            fi
+        fi
+#   else
+#        # No hay procesos, empezar a esperar
+#        if [[ "$QUIET" == "0" ]]; then
+#            echo "Proceso '$PROC_NAME' no encontrado."
+#        fi
+		fi
+fi
+
+# Ejecutar el bucle principal
+do_loop
